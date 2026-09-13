@@ -10,8 +10,15 @@ The approach is tiered rules with explicit confidence, not a single fuzzy score:
 
     1.00  same normalized name + same DOB
     0.95  same normalized name + DOB within 1 day   (keystroke errors)
+    0.93  same email + same phone, no name condition
     0.90  same normalized name + same phone
     0.85  name within edit distance 2 + same email  (typos)
+
+The 0.93 tier is the one people leave out. Every other rule here requires the names to
+agree, which means a record with a mistyped name can never merge no matter how much else
+lines up. Email and phone come from different systems, so both matching is independent
+corroboration, and it is stronger evidence than a name that two unrelated people can
+share.
 
 Why tiers instead of one similarity score: when a merge is wrong, you need to know
 WHICH rule fired so you can fix that rule. A single blended score tells you nothing
@@ -109,16 +116,25 @@ def _compare(a, b):
         and not a.get("dob_is_placeholder") and not b.get("dob_is_placeholder")
     )
 
+    email_a, email_b = a.get("email_normalized"), b.get("email_normalized")
+    phone_a, phone_b = a.get("phone_normalized"), b.get("phone_normalized")
+
+    # Two independent strong identifiers agreeing, with no name condition at all.
+    # This tier exists because the original rule set required a name match on every
+    # path, which meant a record whose name was mistyped could never merge no matter
+    # how much else lined up. Email and phone are issued by different systems, so both
+    # agreeing is stronger evidence than a matching name, not weaker.
+    if email_a and email_a == email_b and phone_a and phone_a == phone_b:
+        return 0.93, "exact_email_exact_phone"
+
     if name_a and name_b and name_a == name_b:
         if dob_usable and dob_a == dob_b:
             return 1.00, "exact_name_exact_dob"
         if dob_usable and abs((dob_a - dob_b).days) <= 1:
             return 0.95, "exact_name_dob_within_1_day"
-        phone_a, phone_b = a.get("phone_normalized"), b.get("phone_normalized")
         if phone_a and phone_a == phone_b:
             return 0.90, "exact_name_exact_phone"
 
-    email_a, email_b = a.get("email_normalized"), b.get("email_normalized")
     if email_a and email_a == email_b and name_a and name_b:
         if levenshtein(name_a, name_b) <= 2:
             return 0.85, "fuzzy_name_exact_email"

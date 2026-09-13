@@ -39,6 +39,28 @@ class TestRules:
         assert clusters == [[0, 1]]
         assert log[0]["rule"] == "exact_name_exact_phone"
 
+    def test_email_and_phone_together_merge_without_any_name_match(self):
+        # The tier that was missing. Two independent identifiers agreeing is stronger
+        # evidence than a shared name, so the names are allowed to disagree completely.
+        recs = [record("nicole walker", email="nw@x.com", phone="3105550142"),
+                record("nic walker", email="nw@x.com", phone="3105550142")]
+        clusters, log = clusters_of(recs)
+        assert clusters == [[0, 1]]
+        assert log[0]["rule"] == "exact_email_exact_phone"
+        assert log[0]["confidence"] == 0.93
+
+    def test_email_alone_does_not_merge(self):
+        # Families share an inbox. One identifier is not enough on its own.
+        recs = [record("nicole walker", email="shared@x.com"),
+                record("david walker", email="shared@x.com")]
+        assert clusters_of(recs)[0] == [[0], [1]]
+
+    def test_phone_alone_does_not_merge(self):
+        # Households and small businesses share a number.
+        recs = [record("nicole walker", phone="3105550142"),
+                record("david walker", phone="3105550142")]
+        assert clusters_of(recs)[0] == [[0], [1]]
+
     def test_typo_plus_same_email_merges(self):
         recs = [record("jonathan reyes", email="jr@x.com"),
                 record("jonathon reyes", email="jr@x.com")]
