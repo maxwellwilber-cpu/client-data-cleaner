@@ -12,6 +12,7 @@ once both are normalized to "3105550142". Clean first, match second.
 
 import re
 import unicodedata
+from datetime import datetime
 
 # US state names and common misspellings -> USPS two-letter code.
 # Real exports contain all of these. This dict is the boring fix.
@@ -37,9 +38,12 @@ _STATE_MAP = {
 # Dates that mean "nobody entered a real birthday."
 # 1/1/1900 and 1/1/1990 are lazy defaults; 12/31/1969 and 1/1/1970 are Unix epoch
 # bleed-through from a system that stored 0 as a timestamp.
+# Kept deliberately short. 1990-01-01 and 2000-01-01 were on this list and have been
+# removed: those are ordinary birthdays, and flagging them stripped real people of their
+# strongest matching signal. A placeholder list that eats real data is worse than a
+# shorter one that misses a few.
 _PLACEHOLDER_DOBS = {
-    "1900-01-01", "1990-01-01", "1969-12-31", "1970-01-01",
-    "2000-01-01", "1800-01-01", "1111-11-11",
+    "1900-01-01", "1969-12-31", "1970-01-01", "1800-01-01", "1111-11-11",
 }
 
 
@@ -123,19 +127,38 @@ def normalize_name(value):
     return text.strip().lower() or None
 
 
-def is_placeholder_dob(value):
+def _to_iso_date(value):
     """
-    True when a date of birth is a known filler value.
+    Parse a date written any of the common ways and return it as YYYY-MM-DD, or None.
 
-    Flagging beats deleting. A flagged birthday can still be displayed; it just must
-    never be trusted for age-based segmentation, which is where fake DOBs do real damage.
+    Exists because the placeholder check used to compare raw text against a set of ISO
+    strings. An export writing 1/1/1900 therefore sailed through undetected, the record
+    kept a usable date of birth, and two unrelated people sharing a name merged at
+    confidence 1.00 on a birthday neither of them has. Any comparison against a known
+    date has to normalize the format first.
     """
     if value is None:
-        return False
-    text = str(value).strip()
+        return None
+    text = str(value).strip()[:10]
     if not text:
-        return False
-    return text[:10] in _PLACEHOLDER_DOBS
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def is_placeholder_dob(value):
+    """
+    True when a date of birth is a known filler value, in any common date format.
+
+    Flagging beats deleting. A flagged birthday can still be displayed; it just must
+    never be trusted as matching evidence, which is where fake dates do real damage.
+    """
+    iso = _to_iso_date(value)
+    return iso in _PLACEHOLDER_DOBS if iso else False
 
 
 def levenshtein(a, b):

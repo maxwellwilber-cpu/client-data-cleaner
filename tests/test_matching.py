@@ -96,6 +96,56 @@ class TestSafety:
         assert clusters == [[0], [1]]
 
 
+class TestDobVeto:
+    """Disconfirming evidence has to outrank confirming evidence."""
+
+    def test_shared_household_email_and_phone_do_not_merge_a_mother_and_son(self):
+        recs = [record("maria lopez", "1962-01-01", email="fam@x.com", phone="3105550142"),
+                record("diego lopez", "1994-01-01", email="fam@x.com", phone="3105550142")]
+        assert clusters_of(recs)[0] == [[0], [1]]
+
+    def test_shared_business_line_does_not_merge_two_employees(self):
+        recs = [record("sarah chen", "1980-01-01", email="info@acme.com", phone="2065559900"),
+                record("robert hall", "1975-01-01", email="info@acme.com", phone="2065559900")]
+        assert clusters_of(recs)[0] == [[0], [1]]
+
+    def test_same_name_and_phone_do_not_merge_senior_and_junior(self):
+        recs = [record("john smith", "1952-06-01", phone="3105550142"),
+                record("john smith", "1985-11-20", phone="3105550142")]
+        assert clusters_of(recs)[0] == [[0], [1]]
+
+    def test_placeholder_dates_never_trigger_the_veto(self):
+        # A fake date must not be treated as disconfirming any more than as confirming.
+        recs = [record("nicole walker", "1900-01-01", email="nw@x.com", phone="3105550142",
+                       placeholder=True),
+                record("nic walker", "1900-01-01", email="nw@x.com", phone="3105550142",
+                       placeholder=True)]
+        assert clusters_of(recs)[0] == [[0, 1]]
+
+    def test_known_limit_household_with_no_dob_still_merges(self):
+        # Documented limitation, asserted so it cannot change silently. With no date of
+        # birth on either side there is nothing to contradict the shared contact details.
+        recs = [record("maria lopez", email="fam@x.com", phone="3105550142"),
+                record("diego lopez", email="fam@x.com", phone="3105550142")]
+        assert clusters_of(recs)[0] == [[0, 1]]
+
+
+class TestTierOrdering:
+    def test_identical_records_score_1_00_not_0_93(self):
+        # Regression: the email+phone tier sat above the name+DOB tiers, so a perfect
+        # match was logged at 0.93 and was rejected outright at --min-confidence 0.95.
+        recs = [record("jon reyes", "1984-03-02", email="j@x.com", phone="3105550142"),
+                record("jon reyes", "1984-03-02", email="j@x.com", phone="3105550142")]
+        clusters, log = clusters_of(recs)
+        assert log[0]["confidence"] == 1.00
+        assert log[0]["rule"] == "exact_name_exact_dob"
+
+    def test_raising_the_threshold_does_not_reject_perfect_matches(self):
+        recs = [record("jon reyes", "1984-03-02", email="j@x.com", phone="3105550142"),
+                record("jon reyes", "1984-03-02", email="j@x.com", phone="3105550142")]
+        assert clusters_of(recs, min_confidence=0.99)[0] == [[0, 1]]
+
+
 class TestTransitivity:
     def test_a_matches_b_matches_c_becomes_one_person(self):
         # A and C share nothing directly; they are the same person only via B.

@@ -30,7 +30,7 @@ No real customer data is needed or included. The sample generator produces the m
 ## What it does
 
 ```
- 3 messy CSV exports          561 rows
+ 3 messy CSV exports          587 rows
           │
           ▼
    normalize every field      phones, emails, states, names, fake birthdays
@@ -39,7 +39,7 @@ No real customer data is needed or included. The sample generator produces the m
    resolve identities         tiered rules, each merge scored and logged
           │
           ▼
-   build golden records       318 people, best value per field
+   build golden records       312 people, best value per field
           │
           ▼
    attribute transactions     1,083 transactions → 100% linked to a person
@@ -55,11 +55,11 @@ No real customer data is needed or included. The sample generator produces the m
 
 | | |
 |---|---|
-| Source rows in | 561 |
-| People resolved | 318 |
-| Duplicate rows collapsed | 243 |
-| Merge operations (all logged) | 276 |
-| Placeholder birthdays flagged | 43 |
+| Source rows in | 587 |
+| People resolved | 312 |
+| Duplicate rows collapsed | 275 |
+| Merge operations (all logged) | 326 |
+| Placeholder birthdays flagged | 36 |
 | Transaction attribution rate | **100%** |
 | Reactivation targets identified | 132 |
 
@@ -68,9 +68,9 @@ No real customer data is needed or included. The sample generator produces the m
 | | |
 |---|---|
 | Precision | **100.00%**, every merge it made was correct |
-| Recall | **91.23%**, it found 91% of the real duplicates |
-| F1 | **95.42%** |
-| Correctly linked pairs | 281 |
+| Recall | **94.57%**, it found 95% of the real duplicates |
+| F1 | **97.21%** |
+| Correctly linked pairs | 331 |
 | Wrong merges | **0** |
 
 Run `python verify.py` to reproduce those numbers.
@@ -88,25 +88,31 @@ of the work before any clever logic runs.
 The normalizers handle what real exports actually contain: six phone formats, Gmail
 dot-aliases and `+tags` (`john.doe+receipts@gmail.com` is the same inbox as
 `johndoe@gmail.com`), 40+ ways to write a state, accents and apostrophes, and placeholder
-birthdays like `1/1/1900` and `12/31/1969`, the second being Unix epoch bleed-through
+birthdays like `1/1/1900` and `12/31/1969`, the second being Unix epoch bleed-through, recognized in ISO or US date format. The list is deliberately short: `1/1/1990` was on it once and is an ordinary birthday, and flagging it stripped real people of their best matching signal
 from a system that stored zero as a timestamp.
 
 ### 2. Tiered rules with explicit confidence, not one fuzzy score
 
 | Confidence | Rule |
 |---|---|
+| **veto** | **two usable dates of birth more than a day apart: never merge, whatever else agrees** |
 | 1.00 | same name + same date of birth |
 | 0.95 | same name + DOB within one day (keystroke errors) |
 | 0.93 | same email + same phone, with no name condition |
 | 0.90 | same name + same phone |
 | 0.85 | name within edit distance 2 + same email (typos) |
+| 0.85 | name within edit distance 2 + same phone (typos) |
 
-The 0.93 tier is the one that is easy to leave out, and leaving it out costs more than
-anything else on this list. Every other rule requires the names to agree, so a record
-with a badly mistyped name could never merge no matter how much else lined up. Email and
-phone are issued by different systems. Both agreeing is independent corroboration, and it
-beats a name that two unrelated people can share. That single rule accounts for 220 of
-the 281 correct links here.
+**The veto is the part worth stealing.** Every rule above it argues for merging. Without
+something that argues against, a rule set only ever hears one side, and it will happily
+collapse a mother and her son who share a family inbox and a house phone, or a father and
+son on the same line with the same name. Two real dates of birth more than a day apart
+settle it: these are different people, and no amount of matching contact detail changes
+that. Disconfirming evidence has to outrank confirming evidence.
+
+Its limit is stated in the code and asserted in a test: with no date of birth on either
+side there is nothing to contradict shared contact details, so a household with no DOBs on
+file still merges. That is the honest boundary of what this data can decide.
 
 When a merge is wrong you need to know *which rule* fired so you can fix that rule. A
 single blended similarity score tells you nothing and cannot be tuned safely. Every merge
@@ -133,16 +139,12 @@ The tuning favors precision over recall on purpose. Merging two different custom
 worse than missing a duplicate: a wrong merge emails the wrong person about someone
 else's account, while a missed duplicate just leaves a customer listed twice.
 
-**What it still misses, and why.** 27 pairs. 15 share a phone but not an email, 8 share an
-email but not a phone, and 4 have neither on one side. Almost all of them are nicknames
-shortened past the fuzzy rule's edit-distance limit: "nicole walker" and "nic walker" are
-three edits apart, not two.
-
-Catching those would mean merging on a single shared identifier with no name agreement at
-all, and that is where the risk lives. Families share an inbox. Households and small
-businesses share a phone number. A rule that merges on email alone will eventually collapse
-a mother and her son into one customer record, and that error is far more expensive than
-listing someone twice.
+**What it still misses, and why.** 19 pairs. 15 share an email or a phone but have names
+too far apart for the fuzzy tiers to reach, and 4 have no email and no phone on one side
+at all. Both groups are the same situation: one piece of evidence, and nothing to
+corroborate it. Merging on a single shared identifier with no name agreement is where
+households and shared business lines start collapsing into one customer, which is the
+error the veto exists to prevent.
 
 Worth saying plainly: this generator gives every person a unique email and phone, so it
 **cannot** measure that risk. The 100% precision figure below is precision against a
@@ -183,7 +185,7 @@ more conservatively.
 python -m pytest tests/ -v
 ```
 
-65 tests. The ones that matter most are in `TestSafety`. They assert what the matcher
+77 tests. The ones that matter most are in `TestSafety` and `TestDobVeto`. They assert what the matcher
 must *never* do: merge two people who share only a name, treat a placeholder birthday as
 evidence, or join unrelated names on a shared email.
 
@@ -198,7 +200,7 @@ cleaner/
 generate_sample_data.py   realistic messy data + hidden ground truth
 run.py                    entry point
 verify.py                 accuracy measurement
-tests/                    62 pytest tests
+tests/                    77 pytest tests
 ```
 
 ## Related

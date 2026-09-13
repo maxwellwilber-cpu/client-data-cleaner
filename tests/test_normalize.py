@@ -68,12 +68,21 @@ class TestName:
 
 
 class TestPlaceholderDob:
-    @pytest.mark.parametrize("raw", ["1900-01-01", "1990-01-01", "1969-12-31", "1970-01-01"])
+    @pytest.mark.parametrize("raw", ["1900-01-01", "1969-12-31", "1970-01-01", "1800-01-01"])
     def test_detects_known_fillers(self, raw):
         assert is_placeholder_dob(raw) is True
 
-    def test_real_birthday_passes(self):
-        assert is_placeholder_dob("1988-04-12") is False
+    @pytest.mark.parametrize("raw", ["1/1/1900", "12/31/1969", "01/01/1970"])
+    def test_detects_fillers_written_in_us_format(self, raw):
+        # Regression: the check compared raw text against ISO strings, so a US-format
+        # export kept its fake dates and they were then used as matching evidence.
+        assert is_placeholder_dob(raw) is True
+
+    @pytest.mark.parametrize("raw", ["1988-04-12", "1990-01-01", "2000-01-01"])
+    def test_real_birthdays_are_not_flagged(self, raw):
+        # 1990-01-01 and 2000-01-01 were once on the placeholder list. They are ordinary
+        # birthdays, and flagging them stripped real people of their best matching signal.
+        assert is_placeholder_dob(raw) is False
 
 
 class TestLevenshtein:

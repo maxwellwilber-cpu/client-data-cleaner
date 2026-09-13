@@ -27,7 +27,10 @@ LAST_NAMES = ["Reyes", "Lopez", "Chen", "Okafor", "Martinez", "Nguyen", "Patel",
               "Muller", "Silva", "OBrien", "Anderson", "Thompson", "Walker", "Hall"]
 STATE_VARIANTS = ["CA", "California", "Calif.", "cali", "ca", "WA", "Washington",
                   "wash", "NY", "New York", "TX", "Texas", "tex"]
-PLACEHOLDER_DOBS = ["1900-01-01", "1990-01-01", "1969-12-31", "1970-01-01"]
+# Must stay in sync with normalize._PLACEHOLDER_DOBS. 1990-01-01 was here and is not a
+# placeholder: it is a plausible birthday, and emitting it as fake while the detector
+# treats it as real made the pipeline see a genuine DOB conflict where none existed.
+PLACEHOLDER_DOBS = ["1900-01-01", "1969-12-31", "1970-01-01", "1800-01-01"]
 
 
 def _phone_variant(digits, rng):
@@ -37,6 +40,13 @@ def _phone_variant(digits, rng):
         f"({a}) {b}-{c}", f"{a}-{b}-{c}", f"{a}.{b}.{c}",
         f"+1 {a} {b} {c}", f"1-{a}-{b}-{c}", digits,
     ])
+
+
+def _shift_a_day(iso, rng):
+    """Move a date one day, the way a typed digit goes wrong."""
+    from datetime import date, timedelta
+    y, m, d = (int(x) for x in iso.split("-"))
+    return (date(y, m, d) + timedelta(days=rng.choice([-1, 1]))).isoformat()
 
 
 def _typo(text, rng):
@@ -123,7 +133,11 @@ def generate(n_people=300, seed=42, outdir="sample_data"):
                 "e_mail": crm_email if rng.random() > 0.12 else "",
                 "mobile": _phone_variant(p["digits"], rng) if rng.random() > 0.2 else "",
                 "st": p["state"],
-                "birthdate": p["dob"] if rng.random() > 0.3 else "",
+                # 15% get a date one day off, which is what a keystroke error looks
+                # like in practice. Without these the 0.95 tier is advertised in the
+                # README and never once exercised by the benchmark.
+                "birthdate": _shift_a_day(p["dob"], rng) if rng.random() < 0.15
+                             else (p["dob"] if rng.random() > 0.3 else ""),
             })
 
         # --- Payments sheet: ~35%, first/last split, messiest ---

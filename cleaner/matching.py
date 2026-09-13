@@ -8,11 +8,13 @@ email misses the one who used a work address once.
 
 The approach is tiered rules with explicit confidence, not a single fuzzy score:
 
+    VETO  two usable DOBs more than a day apart  -> never merge, whatever else agrees
     1.00  same normalized name + same DOB
     0.95  same normalized name + DOB within 1 day   (keystroke errors)
     0.93  same email + same phone, no name condition
     0.90  same normalized name + same phone
     0.85  name within edit distance 2 + same email  (typos)
+    0.85  name within edit distance 2 + same phone  (typos)
 
 The 0.93 tier is the one people leave out. Every other rule here requires the names to
 agree, which means a record with a mistyped name can never merge no matter how much else
@@ -119,25 +121,44 @@ def _compare(a, b):
     email_a, email_b = a.get("email_normalized"), b.get("email_normalized")
     phone_a, phone_b = a.get("phone_normalized"), b.get("phone_normalized")
 
-    # Two independent strong identifiers agreeing, with no name condition at all.
-    # This tier exists because the original rule set required a name match on every
-    # path, which meant a record whose name was mistyped could never merge no matter
-    # how much else lined up. Email and phone are issued by different systems, so both
-    # agreeing is stronger evidence than a matching name, not weaker.
-    if email_a and email_a == email_b and phone_a and phone_a == phone_b:
-        return 0.93, "exact_email_exact_phone"
+    # VETO FIRST. Two usable dates of birth more than a day apart mean these are two
+    # different people, and no amount of other agreement changes that. Without this, a
+    # father and son on the same household phone merged on name + phone, and a mother
+    # and son on the family email merged on email + phone. Disconfirming evidence has to
+    # outrank confirming evidence or the rule set only ever argues one side.
+    if dob_usable and abs((dob_a - dob_b).days) > 1:
+        return 0.0, None
 
+    # Rules below are ordered strongest first and the first match wins.
     if name_a and name_b and name_a == name_b:
         if dob_usable and dob_a == dob_b:
             return 1.00, "exact_name_exact_dob"
-        if dob_usable and abs((dob_a - dob_b).days) <= 1:
+        if dob_usable:                       # already within 1 day, the veto guarantees it
             return 0.95, "exact_name_dob_within_1_day"
         if phone_a and phone_a == phone_b:
             return 0.90, "exact_name_exact_phone"
 
-    if email_a and email_a == email_b and name_a and name_b:
-        if levenshtein(name_a, name_b) <= 2:
+    # Email and phone both agreeing, with no name condition. Placed AFTER the name+DOB
+    # tiers, not before: an earlier version had it first, which meant byte-identical
+    # records scored 0.93 instead of 1.00 and were rejected outright at
+    # --min-confidence 0.95, the opposite of what raising the threshold should do.
+    #
+    # Known limit: household members who share both an inbox and a phone AND have no
+    # date of birth on file will still merge here. The veto above catches them whenever
+    # a DOB exists on both sides, which is the common case in booking data. Without one,
+    # this rule cannot tell a family from a person. See test_known_limit_* in the tests.
+    if email_a and email_a == email_b and phone_a and phone_a == phone_b:
+        return 0.93, "exact_email_exact_phone"
+
+    if name_a and name_b and levenshtein(name_a, name_b) <= 2:
+        if email_a and email_a == email_b:
             return 0.85, "fuzzy_name_exact_email"
+        # The mirror image, and it was missing. A typo'd name with a matching phone is
+        # exactly as strong as a typo'd name with a matching email, and leaving it out
+        # meant more than half the unmatched pairs were ordinary typos on records that
+        # shared a phone but no email.
+        if phone_a and phone_a == phone_b:
+            return 0.85, "fuzzy_name_exact_phone"
 
     return 0.0, None
 
